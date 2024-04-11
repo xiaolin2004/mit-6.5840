@@ -6,8 +6,10 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
-import "strconv"
+import (
+	"os"
+	"strconv"
+)
 
 //
 // example to show how to declare the arguments
@@ -33,4 +35,35 @@ func coordinatorSock() string {
 	s := "/var/tmp/5840-mr-"
 	s += strconv.Itoa(os.Getuid())
 	return s
+}
+
+type RegisterArgs struct {
+}
+
+type RegisterReply struct {
+	Workerindex int
+}
+
+// type HeartBeat struct {
+// 	Workerindex int
+// }
+
+type TaskArgs struct {
+	TaskType  TaskType
+	FileName  []string
+	nReduce   int
+	TaskIndex int
+}
+
+type TaskReply struct {
+	Workerindex int
+	TaskType    TaskType
+	FileName    []string
+}
+
+type TaskRequire struct {
+	Workerindex int
+}
+
+type TaskReplyConfirm struct {
 }
