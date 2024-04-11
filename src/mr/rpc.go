@@ -23,7 +23,7 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
-
+// 在此进行消息传递的格式规范
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.

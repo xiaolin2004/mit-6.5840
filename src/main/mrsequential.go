@@ -6,13 +6,17 @@ package main
 // go run mrsequential.go wc.so pg*.txt
 //
 
-import "fmt"
-import "6.5840/mr"
-import "plugin"
-import "os"
-import "log"
-import "io/ioutil"
-import "sort"
+import (
+	"fmt"
+	"io"
+	"io/ioutil"
+	"log"
+	"os"
+	"plugin"
+	"sort"
+
+	"6.5840/mr"
+)
 
 // for sorting by key.
 type ByKey []mr.KeyValue
@@ -35,13 +39,17 @@ func main() {
 	// pass it to Map,
 	// accumulate the intermediate Map output.
 	//
+	//创建中间变量切片
 	intermediate := []mr.KeyValue{}
+	//依次读取输入的文件并逐个输入到map函数中处理
+	//完成后，马上附加到中间变量切片
+	//这个任务应该被master承担，涉及到任务分发
 	for _, filename := range os.Args[2:] {
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
 		}
-		content, err := ioutil.ReadAll(file)
+		content, err := io.ReadAll(file)
 		if err != nil {
 			log.Fatalf("cannot read %v", filename)
 		}
@@ -68,13 +76,16 @@ func main() {
 	i := 0
 	for i < len(intermediate) {
 		j := i + 1
+		//首先查找到最后一个同key的下标（因为已经经过排序，可以直接顺序搜索）
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 			j++
 		}
 		values := []string{}
+		//将其一网打尽
 		for k := i; k < j; k++ {
 			values = append(values, intermediate[k].Value)
 		}
+		//传入reduce处理
 		output := reducef(intermediate[i].Key, values)
 
 		// this is the correct format for each line of Reduce output.
