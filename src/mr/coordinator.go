@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -28,11 +29,16 @@ const (
 	Workerdown = 202
 )
 
-type WorkerList []WorkerState
+type WorkerList struct {
+	list []WorkerState
+	mu   sync.Mutex
+}
 
 func (l *WorkerList) noBusy() bool {
 	nobusy := true
-	for _, state := range *l {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, state := range l.list {
 		if state == Workerbusy {
 			return false
 		}
@@ -66,9 +72,9 @@ func (c *Coordinator) Dequeue(TaskType TaskType) Task {
 }
 
 func (c *Coordinator) Enqueue(TaskType TaskType, Task Task) {
+	c.DelegateIndex(&Task, TaskType)
 	switch TaskType {
 	case Map:
-
 		c.tasklist.Map.Enqueue(Task)
 	case Reduce:
 		c.tasklist.Reduce.Enqueue(Task)
@@ -101,9 +107,11 @@ type Coordinator struct {
 }
 
 func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
-	c.workerList = append(c.workerList, Workeridle)
+	c.workerList.mu.Lock()
+	defer c.workerList.mu.Unlock()
+	c.workerList.list = append(c.workerList.list, Workeridle)
 	c.TimeOut = append(c.TimeOut, make(chan FinishMsg))
-	reply.Workerindex = int(len(c.workerList) - 1)
+	reply.Workerindex = int(len(c.workerList.list) - 1)
 	return nil
 }
 
@@ -114,14 +122,23 @@ func (c *Coordinator) GetTask(args *TaskRequire, reply *TaskArgs) error {
 	reply.FileName = tmpFileName.FileName
 	reply.NReduce = c.nReduce
 	reply.TaskIndex = tmpFileName.TaskIndex
-	c.workerList[args.Workerindex] = Workerbusy
+	c.workerList.mu.Lock()
+	c.workerList.list[args.Workerindex] = Workerbusy
+	c.workerList.mu.Unlock()
+	fmt.Printf("send task:%+v\n", reply)
 	// 为任务设置超时
 	go func() {
 		select {
 		case <-c.TimeOut[args.Workerindex]:
-			c.workerList[args.Workerindex] = Workeridle
+			fmt.Printf("get signal, worker %v finish\n", args.Workerindex)
+			c.workerList.mu.Lock()
+			c.workerList.list[args.Workerindex] = Workeridle
+			c.workerList.mu.Unlock()
 		case <-time.After(TimeOut * time.Second):
-			c.workerList[args.Workerindex] = Workerdown
+			fmt.Printf("Timeout, worker %v down\n", args.Workerindex)
+			c.workerList.mu.Lock()
+			c.workerList.list[args.Workerindex] = Workerdown
+			c.workerList.mu.Unlock()
 			c.Enqueue(c.state, tmpFileName)
 		}
 	}()
@@ -129,6 +146,7 @@ func (c *Coordinator) GetTask(args *TaskRequire, reply *TaskArgs) error {
 }
 
 func (c *Coordinator) FinishWork(args *TaskReply, reply *TaskReplyConfirm) error {
+	fmt.Printf("get reply:%+v\n", args)
 	//向对应计时器发送消息
 	c.TimeOut[args.Workerindex] <- FinishMsg{}
 	//读取任务类型，如果是map，首先将文件统一改名，然后打包丢进reduce队列
@@ -174,7 +192,7 @@ func (c *Coordinator) server() {
 	go http.Serve(l, nil)
 	go func() {
 		for {
-			fmt.Printf("%+v", c.workerList)
+			fmt.Printf("workerList: %+v\n", c.workerList.list)
 			time.Sleep(1 * time.Second)
 		}
 	}()
@@ -199,12 +217,12 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 	c.nReduce = nReduce
 	c.state = Map
-	c.workerList = make(WorkerList, 1)
+	c.workerList = WorkerList{list: []WorkerState{}, mu: sync.Mutex{}}
 	c.tasklist = TaskList{Map: *NewSliceQueue(filenum), Reduce: *NewSliceQueue(filenum * nReduce)}
 	for index, f := range files {
 		c.tasklist.Map.Enqueue(Task{FileName: []string{f}, TaskIndex: index})
 	}
-	c.TimeOut = make([]chan FinishMsg, 1)
+	c.TimeOut = make([]chan FinishMsg, 0)
 	go func() {
 		for {
 			c.StateTransit()
@@ -226,7 +244,6 @@ func (c *Coordinator) StateTransit() {
 	case Reduce:
 		if c.tasklist.Reduce.isEmpty() {
 			if c.tasklist.Reduce.isEmpty() && c.workerList.noBusy() {
-				time.Sleep(10 * time.Second)
 				c.state = Complete
 			}
 		}
