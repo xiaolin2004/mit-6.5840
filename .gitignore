@@ -4,3 +4,4 @@ api.key
 *-handin.tar.gz
 src/main/mr-out*
 src/main/Map*
+src/main/tmp*

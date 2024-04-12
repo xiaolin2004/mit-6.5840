@@ -20,6 +20,7 @@ type KeyValue struct {
 
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
+// 也就是说，对于每一个等待加入的key，通过这个可以指定分配到固定的文件
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
@@ -111,19 +112,44 @@ func (w *KWorker) DoMap(FileName []string, nReduce int, TaskIndex int) {
 	}
 	file.Close()
 	kva := w.mapf(filename, string(content))
-	tmp := splitSlice(kva, nReduce)
+	ret_kva := make([][]KeyValue, nReduce)
 	retFileName := make([]string, 0)
-	for index, kva := range tmp {
-		filename = fmt.Sprintf("tmpMapInter-%v-%v", TaskIndex, index)
-		file, err = os.Create(filename)
+	i := 0
+	for {
+		if i >= nReduce {
+			break
+		}
+		filename = fmt.Sprintf("tmpMapInter-%v-%v", TaskIndex, i)
+		retFileName = append(retFileName, filename)
+		i++
+	}
+	// fmt.Printf("retFileName:%+v\n",retFileName)
+	for _, kv := range kva {
+		index := ihash(kv.Key) % nReduce
+		ret_kva[index] = append(ret_kva[index], kv)
+		// fmt.Printf("append kv:%+v to ret_kva[%v\n]",kv,index)
+	}
+	// fmt.Printf("ret_kva:%+v\n",ret_kva)
+	j := 0
+	for {
+		if j >= nReduce {
+			break
+		}
+		// fmt.Printf("in j=%v,open file %v\n",j,retFileName[j])
+		file, err := os.OpenFile(retFileName[j], os.O_WRONLY|os.O_CREATE, 0666)
 		if err != nil {
-			log.Fatalf("cannot creat %v", filename)
+			log.Fatalf("cannot open %v", retFileName[j])
 		}
 		enc := json.NewEncoder(file)
-		for _, kv := range kva {
-			enc.Encode(kv)
+		for _, kv := range ret_kva[j] {
+			// fmt.Printf("encode kv:%+v to %v\n",kva,retFileName[j])
+			err :=enc.Encode(&kv)
+			if err!= nil{
+				log.Fatalf("cannot encode to %v, err:%v\n",retFileName[j],err)
+			}
 		}
-		retFileName = append(retFileName, filename)
+		file.Close()
+		j++
 	}
 	w.ReplyTask(retFileName, Map)
 }

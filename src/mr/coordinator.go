@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const TimeOut = 10
@@ -86,7 +88,7 @@ const (
 	Map      = 300
 	Reduce   = 301
 	Complete = 302
-	Wait    = 303
+	Wait     = 303
 )
 
 type FinishMsg struct{}
@@ -119,8 +121,8 @@ func (c *Coordinator) GetTask(args *TaskRequire, reply *TaskArgs) error {
 	// 写入reply
 	reply.TaskType = c.state
 	tmpTask := c.Dequeue(c.state)
-	if len(tmpTask.FileName)==0{
-		reply.TaskType=Wait
+	if len(tmpTask.FileName) == 0 {
+		reply.TaskType = Wait
 		return nil
 	}
 	reply.FileName = tmpTask.FileName
@@ -165,7 +167,19 @@ func (c *Coordinator) FinishWork(args *TaskReply, reply *TaskReplyConfirm) error
 			}
 			FileName = append(FileName, newname)
 		}
-		c.Enqueue(Reduce, Task{FileName: FileName, TaskIndex: -1})
+		for _, filename := range FileName {
+			// lastIndex := len(filename) - 1
+			// index, err := strconv.Atoi(filename[lastIndex-1 : lastIndex])
+			r, _ := utf8.DecodeLastRuneInString(filename)
+			lastChar := string(r)
+			index, err := strconv.Atoi(lastChar)
+			if err != nil {
+				log.Fatalf("cannot cast the %v to int", lastChar)
+			}
+			c.tasklist.Reduce.mu.Lock()
+			c.tasklist.Reduce.data[index].FileName = append(c.tasklist.Reduce.data[index].FileName, filename)
+			c.tasklist.Reduce.mu.Unlock()
+		}
 	} else if args.TaskType == Reduce { //如果是reduce，统一改名
 		for _, filename := range args.FileName {
 			newname = filename[3:]
@@ -221,9 +235,17 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.nReduce = nReduce
 	c.state = Map
 	c.workerList = WorkerList{list: []WorkerState{}, mu: sync.Mutex{}}
-	c.tasklist = TaskList{Map: *NewSliceQueue(filenum), Reduce: *NewSliceQueue(filenum * nReduce)}
+	c.tasklist = TaskList{Map: *NewSliceQueue(filenum), Reduce: *NewSliceQueue(nReduce)}
 	for index, f := range files {
 		c.tasklist.Map.Enqueue(Task{FileName: []string{f}, TaskIndex: index})
+	}
+	i := 0
+	for {
+		if i >= nReduce {
+			break
+		}
+		c.Enqueue(Reduce, Task{FileName: []string{}, TaskIndex: -1})
+		i++
 	}
 	c.TimeOut = make([]chan FinishMsg, 0)
 	go func() {
