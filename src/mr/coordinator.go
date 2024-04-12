@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -87,6 +86,7 @@ const (
 	Map      = 300
 	Reduce   = 301
 	Complete = 302
+	Wait    = 303
 )
 
 type FinishMsg struct{}
@@ -118,35 +118,39 @@ func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 func (c *Coordinator) GetTask(args *TaskRequire, reply *TaskArgs) error {
 	// 写入reply
 	reply.TaskType = c.state
-	tmpFileName := c.Dequeue(c.state)
-	reply.FileName = tmpFileName.FileName
+	tmpTask := c.Dequeue(c.state)
+	if len(tmpTask.FileName)==0{
+		reply.TaskType=Wait
+		return nil
+	}
+	reply.FileName = tmpTask.FileName
 	reply.NReduce = c.nReduce
-	reply.TaskIndex = tmpFileName.TaskIndex
+	reply.TaskIndex = tmpTask.TaskIndex
 	c.workerList.mu.Lock()
 	c.workerList.list[args.Workerindex] = Workerbusy
 	c.workerList.mu.Unlock()
-	fmt.Printf("send task:%+v\n", reply)
+	// fmt.Printf("send task:%+v\n", reply)
 	// 为任务设置超时
 	go func() {
 		select {
 		case <-c.TimeOut[args.Workerindex]:
-			fmt.Printf("get signal, worker %v finish\n", args.Workerindex)
+			// fmt.Printf("get signal, worker %v finish\n", args.Workerindex)
 			c.workerList.mu.Lock()
 			c.workerList.list[args.Workerindex] = Workeridle
 			c.workerList.mu.Unlock()
 		case <-time.After(TimeOut * time.Second):
-			fmt.Printf("Timeout, worker %v down\n", args.Workerindex)
+			// fmt.Printf("Timeout, worker %v down\n", args.Workerindex)
 			c.workerList.mu.Lock()
 			c.workerList.list[args.Workerindex] = Workerdown
 			c.workerList.mu.Unlock()
-			c.Enqueue(c.state, tmpFileName)
+			c.Enqueue(c.state, tmpTask)
 		}
 	}()
 	return nil
 }
 
 func (c *Coordinator) FinishWork(args *TaskReply, reply *TaskReplyConfirm) error {
-	fmt.Printf("get reply:%+v\n", args)
+	// fmt.Printf("get reply:%+v\n", args)
 	//向对应计时器发送消息
 	c.TimeOut[args.Workerindex] <- FinishMsg{}
 	//读取任务类型，如果是map，首先将文件统一改名，然后打包丢进reduce队列
@@ -190,18 +194,17 @@ func (c *Coordinator) server() {
 		log.Fatal("listen error:", e)
 	}
 	go http.Serve(l, nil)
-	go func() {
-		for {
-			fmt.Printf("workerList: %+v\n", c.workerList.list)
-			time.Sleep(1 * time.Second)
-		}
-	}()
+	// go func() {
+	// 	for {
+	// 		fmt.Printf("workerList: %+v\n", c.workerList.list)
+	// 		time.Sleep(1 * time.Second)
+	// 	}
+	// }()
 }
 
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-
 	if c.state == Complete {
 		return true
 	} else {

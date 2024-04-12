@@ -54,10 +54,10 @@ func (w *KWorker) RegisterSelf() {
 	reply := RegisterReply{}
 	ok := call("Coordinator.Register", &args, &reply)
 	if ok {
-		fmt.Printf("Coordinator is available, register succuss, get id %v.\n", reply.Workerindex)
+		// fmt.Printf("Coordinator is available, register succuss, get id %v.\n", reply.Workerindex)
 		w.Workerindex = reply.Workerindex
 	} else {
-		fmt.Printf("Coordinator is down")
+		// fmt.Printf("Coordinator is down")
 	}
 }
 
@@ -90,7 +90,11 @@ func (w *KWorker) Work() {
 				w.DoReduce(Task.FileName, Task.TaskIndex)
 			case Complete:
 				time.Sleep(10 * time.Second)
+			case Wait:
+				time.Sleep(10 * time.Second)
 			}
+		} else {
+			w.ReplyTask([]string{}, Task.TaskType)
 		}
 	}
 }
@@ -126,7 +130,7 @@ func (w *KWorker) DoMap(FileName []string, nReduce int, TaskIndex int) {
 
 func (w *KWorker) DoReduce(FileName []string, TaskIndex int) {
 	kva := make([]KeyValue, 0)
-	fmt.Printf("get reduce task:{File:%+v , index:%v}\n", FileName, TaskIndex)
+	// fmt.Printf("get reduce task:{File:%+v , index:%v}\n", FileName, TaskIndex)
 	for _, filename := range FileName {
 		file, err := os.Open(filename)
 		if err != nil {
@@ -136,12 +140,10 @@ func (w *KWorker) DoReduce(FileName []string, TaskIndex int) {
 		for {
 			var kv KeyValue
 			if err := dec.Decode(&kv); err != nil {
-				log.Fatal(err)
+				break
 			}
-			fmt.Printf("the kv decoded are %+v\n", kv)
 			kva = append(kva, kv)
 		}
-
 	}
 	sort.Sort(ByKey(kva))
 	ret := []KeyValue{}
