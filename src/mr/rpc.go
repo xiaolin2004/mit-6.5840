@@ -51,7 +51,7 @@ type RegisterReply struct {
 type TaskArgs struct {
 	TaskType  TaskType
 	FileName  []string
-	nReduce   int
+	NReduce   int
 	TaskIndex int
 }
 

@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -29,27 +30,48 @@ const (
 
 type WorkerList []WorkerState
 
+func (l *WorkerList) noBusy() bool {
+	nobusy := true
+	for _, state := range *l {
+		if state == Workerbusy {
+			return false
+		}
+	}
+	return nobusy
+}
+
 type TaskList struct {
 	Map    SliceQueue
 	Reduce SliceQueue
 }
 
-func (c *Coordinator) Dequeue(TaskType TaskType) []string {
+func (c *Coordinator) DelegateIndex(task *Task, TaskType TaskType) {
+	if TaskType == Map && task.TaskIndex < 0 {
+		c.LockMapIndex.Increment()
+		task.TaskIndex = c.LockMapIndex.Read()
+	}
+	if TaskType == Reduce && task.TaskIndex < 0 {
+		c.LockReduceIndex.Increment()
+		task.TaskIndex = c.LockReduceIndex.Read()
+	}
+}
+func (c *Coordinator) Dequeue(TaskType TaskType) Task {
 	switch TaskType {
 	case Map:
 		return c.tasklist.Map.Dequeue()
 	case Reduce:
 		return c.tasklist.Reduce.Dequeue()
 	}
-	return make([]string, 0)
+	return Task{}
 }
 
-func (c *Coordinator) Enqueue(TaskType TaskType, FileName []string) {
+func (c *Coordinator) Enqueue(TaskType TaskType, Task Task) {
 	switch TaskType {
 	case Map:
-		c.tasklist.Map.Enqueue(FileName)
+
+		c.tasklist.Map.Enqueue(Task)
 	case Reduce:
-		c.tasklist.Reduce.Enqueue(FileName)
+		c.tasklist.Reduce.Enqueue(Task)
 	}
 }
 
@@ -69,37 +91,30 @@ type Task struct {
 }
 
 type Coordinator struct {
-	state      TaskType
-	nReduce    int
-	tasklist   TaskList
-	workerList WorkerList
-	TimeOut    []chan FinishMsg
-	//这两个Index是没有考虑过worker下线的，需要重新设计
-	MapIndex    int
-	ReduceIndex int
+	state           TaskType
+	nReduce         int
+	tasklist        TaskList
+	workerList      WorkerList
+	TimeOut         []chan FinishMsg
+	LockMapIndex    LockMIndex
+	LockReduceIndex LockMIndex
 }
 
 func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 	c.workerList = append(c.workerList, Workeridle)
 	c.TimeOut = append(c.TimeOut, make(chan FinishMsg))
-	reply.Workerindex = int(len(c.workerList))
+	reply.Workerindex = int(len(c.workerList) - 1)
 	return nil
 }
 
 func (c *Coordinator) GetTask(args *TaskRequire, reply *TaskArgs) error {
-
 	// 写入reply
 	reply.TaskType = c.state
 	tmpFileName := c.Dequeue(c.state)
-	reply.FileName = tmpFileName
-	reply.nReduce = c.nReduce
-	if c.state == Map {
-		reply.TaskIndex = c.MapIndex
-		c.MapIndex++
-	} else if c.state == Reduce {
-		reply.TaskIndex = c.ReduceIndex
-		c.ReduceIndex++
-	}
+	reply.FileName = tmpFileName.FileName
+	reply.NReduce = c.nReduce
+	reply.TaskIndex = tmpFileName.TaskIndex
+	c.workerList[args.Workerindex] = Workerbusy
 	// 为任务设置超时
 	go func() {
 		select {
@@ -113,12 +128,7 @@ func (c *Coordinator) GetTask(args *TaskRequire, reply *TaskArgs) error {
 	return nil
 }
 
-// func (c *Coordinator) HeartBeat(args *HeartBeat, reply interface{}) error {
-// 	//针对超时机制修改
-// 	return nil
-// }
-
-func (c *Coordinator) FinishWork(args *TaskReply, reply interface{}) error {
+func (c *Coordinator) FinishWork(args *TaskReply, reply *TaskReplyConfirm) error {
 	//向对应计时器发送消息
 	c.TimeOut[args.Workerindex] <- FinishMsg{}
 	//读取任务类型，如果是map，首先将文件统一改名，然后打包丢进reduce队列
@@ -131,17 +141,15 @@ func (c *Coordinator) FinishWork(args *TaskReply, reply interface{}) error {
 			if err != nil {
 				log.Fatalf("cannot commit %v", filename)
 			}
-			FileName = append(FileName, filename)
+			FileName = append(FileName, newname)
 		}
-		c.Enqueue(Reduce, FileName)
+		c.Enqueue(Reduce, Task{FileName: FileName, TaskIndex: -1})
 	} else if args.TaskType == Reduce { //如果是reduce，统一改名
-		if args.TaskType == Map {
-			for _, filename := range args.FileName {
-				newname = filename[3:]
-				err := os.Rename(filename, newname)
-				if err != nil {
-					log.Fatalf("cannot commit %v", filename)
-				}
+		for _, filename := range args.FileName {
+			newname = filename[3:]
+			err := os.Rename(filename, newname)
+			if err != nil {
+				log.Fatalf("cannot commit %v", filename)
 			}
 		}
 	}
@@ -164,26 +172,23 @@ func (c *Coordinator) server() {
 		log.Fatal("listen error:", e)
 	}
 	go http.Serve(l, nil)
+	go func() {
+		for {
+			fmt.Printf("%+v", c.workerList)
+			time.Sleep(1 * time.Second)
+		}
+	}()
 }
 
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	if c.state == Map {
-		return false
-	}
-	for w := range c.workerList[:] {
-		if w == Workerbusy {
-			return false
-		}
-	}
-	t := c.tasklist.Reduce.Dequeue()
-	if t != nil {
-		return false
-	}
-	ret := true
 
-	return ret
+	if c.state == Complete {
+		return true
+	} else {
+		return false
+	}
 }
 
 // create a Coordinator.
@@ -194,12 +199,39 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 	c.nReduce = nReduce
 	c.state = Map
-	c.workerList = make(WorkerList, 0)
+	c.workerList = make(WorkerList, 1)
 	c.tasklist = TaskList{Map: *NewSliceQueue(filenum), Reduce: *NewSliceQueue(filenum * nReduce)}
-	for _, f := range files {
-		c.tasklist.Map.Enqueue([]string{f})
+	for index, f := range files {
+		c.tasklist.Map.Enqueue(Task{FileName: []string{f}, TaskIndex: index})
 	}
-	c.TimeOut = make([]chan FinishMsg, 0)
+	c.TimeOut = make([]chan FinishMsg, 1)
+	go func() {
+		for {
+			c.StateTransit()
+			time.Sleep(10 * time.Microsecond)
+		}
+	}()
 	c.server()
 	return &c
+}
+
+func (c *Coordinator) StateTransit() {
+	switch c.state {
+	case Map:
+		if c.tasklist.Map.isEmpty() {
+			if c.tasklist.Map.isEmpty() && c.workerList.noBusy() {
+				c.state = Reduce
+			}
+		}
+	case Reduce:
+		if c.tasklist.Reduce.isEmpty() {
+			if c.tasklist.Reduce.isEmpty() && c.workerList.noBusy() {
+				time.Sleep(10 * time.Second)
+				c.state = Complete
+			}
+		}
+	case Complete:
+		return
+	}
+
 }

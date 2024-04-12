@@ -79,13 +79,15 @@ func (w *KWorker) ReplyTask(FileName []string, TaskType TaskType) {
 }
 
 func (w *KWorker) Work() {
-	Task := w.ApplyTask()
-	if Task.TaskType != Complete {
-		switch Task.TaskType {
-		case Map:
-			w.DoMap(Task.FileName, Task.nReduce, Task.TaskIndex)
-		case Reduce:
-			w.DoReduce(Task.FileName, Task.TaskIndex)
+	for {
+		Task := w.ApplyTask()
+		if Task.TaskType != Complete {
+			switch Task.TaskType {
+			case Map:
+				w.DoMap(Task.FileName, Task.NReduce, Task.TaskIndex)
+			case Reduce:
+				w.DoReduce(Task.FileName, Task.TaskIndex)
+			}
 		}
 	}
 }
@@ -106,7 +108,7 @@ func (w *KWorker) DoMap(FileName []string, nReduce int, TaskIndex int) {
 	retFileName := make([]string, 0)
 	for index, kva := range tmp {
 		filename = fmt.Sprintf("tmpMapInter-%v-%v", TaskIndex, index)
-		file, err = os.Open(filename)
+		file, err = os.Create(filename)
 		if err != nil {
 			log.Fatalf("cannot creat %v", filename)
 		}
@@ -121,8 +123,9 @@ func (w *KWorker) DoMap(FileName []string, nReduce int, TaskIndex int) {
 
 func (w *KWorker) DoReduce(FileName []string, TaskIndex int) {
 	kva := make([]KeyValue, 0)
+	fmt.Printf("%+v\n", FileName)
 	for _, filename := range FileName {
-		file, err := os.Open(filename)
+		file, err := os.Open("mr-tmp/" + filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
 		}
@@ -150,7 +153,7 @@ func (w *KWorker) DoReduce(FileName []string, TaskIndex int) {
 		i = j
 	}
 	filename := fmt.Sprintf("tmpmr-out-%v", TaskIndex)
-	ofile, err := os.Open(filename)
+	ofile, err := os.Create(filename)
 	if err != nil {
 		log.Fatalf("cannot creat %v", filename)
 	}
