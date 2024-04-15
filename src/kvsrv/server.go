@@ -3,7 +3,6 @@ package kvsrv
 import (
 	"log"
 	"sync"
-
 	"github.com/google/uuid"
 )
 
@@ -32,7 +31,7 @@ const (
 )
 
 type KVServer struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	kvStore map[string]string
 	OpCache *LruCache
 }
@@ -58,32 +57,41 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 func StartKVServer() *KVServer {
 	kv := new(KVServer)
 	kv.kvStore = make(map[string]string)
-	kv.mu = sync.Mutex{}
+	kv.mu = sync.RWMutex{}
 	kv.OpCache = newLruCache(30)
 	return kv
 }
 
 func (kv *KVServer) Op(task *Operation) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
+	kv.mu.RLock()
 	if kv.OpCache.Contain(task.Opid) {
 		oldop, _ := kv.OpCache.Get(task.Opid)
+		kv.mu.RUnlock()
 		task.Value = oldop.Value
 	} else {
 		switch task.Optype {
 		case OpGet:
 			task.Value = kv.kvStore[task.Key]
+			kv.mu.RUnlock()
 		case OpAppend:
 			old, ok := kv.kvStore[task.Key]
 			if !ok {
 				old = ""
 			}
+			kv.mu.RUnlock()
+			kv.mu.Lock()
 			kv.kvStore[task.Key] += task.Value
 			task.Value = old
+			kv.OpCache.Add(*task)
+			kv.mu.Unlock()
 		case OpPut:
+			kv.mu.RUnlock()
+			kv.mu.Lock()
 			kv.kvStore[task.Key] = task.Value
+			kv.OpCache.Add(*task)
+			kv.mu.Unlock()
 		}
-		kv.OpCache.Add(*task)
+
 	}
 
 }
