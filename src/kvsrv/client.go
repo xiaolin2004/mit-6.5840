@@ -13,6 +13,8 @@ type Clerk struct {
 	// You will have to modify this struct.
 }
 
+type Finish struct{}
+
 func nrand() int64 {
 	max := big.NewInt(int64(1) << 62)
 	bigx, _ := rand.Int(rand.Reader, max)
@@ -40,17 +42,18 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{Key: key, UUID: uuid.New()}
 	reply := GetReply{}
-	sig := new(chan int)
-	go ck.callGetrepeatedky(&args, &reply, *sig)
+	sig := make(chan Finish)
+	go ck.callGetrepeatedky(&args, &reply, sig)
 	// You will have to modify this function.
+	<-sig
 	return reply.Value
 }
 
-func (ck *Clerk) callGetrepeatedky(args *GetArgs, reply *GetReply, sig chan int) {
+func (ck *Clerk) callGetrepeatedky(args *GetArgs, reply *GetReply, sig chan Finish) {
 	ok := ck.server.Call("KVServer.Get", args, reply)
 	for {
 		if ok {
-			sig <- 1
+			sig <- Finish{}
 			break
 		} else {
 			ok = ck.server.Call("KVServer.Get", args, reply)
@@ -70,17 +73,18 @@ func (ck *Clerk) callGetrepeatedky(args *GetArgs, reply *GetReply, sig chan int)
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	args := PutAppendArgs{Key: key, Value: value, UUID: uuid.New()}
 	reply := PutAppendReply{}
-	sig := new(chan int)
-	go ck.callPutAppendrepeatedly(&args, &reply, *sig, op)
+	sig := make(chan Finish)
+	go ck.callPutAppendrepeatedly(&args, &reply, sig, op)
+	<-sig
 	return reply.Value
 }
 
-func (ck *Clerk) callPutAppendrepeatedly(args *PutAppendArgs, reply *PutAppendReply, sig chan int, op string) {
+func (ck *Clerk) callPutAppendrepeatedly(args *PutAppendArgs, reply *PutAppendReply, sig chan Finish, op string) {
 	rpcname := "KVServer." + op
 	ok := ck.server.Call(rpcname, args, reply)
 	for {
 		if ok {
-			sig <- 1
+			sig <- Finish{}
 			break
 		} else {
 			ok = ck.server.Call(rpcname, args, reply)
