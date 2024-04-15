@@ -1,8 +1,8 @@
 package kvsrv
 
 import (
-	"fmt"
 	"log"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -16,20 +16,10 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-type Manager struct {
-	kvStore map[string]string
-	OpQueue SliceQueue
-	OpCache *Cache
-}
-
-type Args interface{}
-type Reply interface{}
-
 type Operation struct {
-	Empty  bool
 	Optype Optype
-	Args   Args
-	Reply  Reply
+	Key    string
+	Value  string
 	Opid   uuid.UUID
 }
 
@@ -42,77 +32,58 @@ const (
 )
 
 type KVServer struct {
-	Manager Manager
-	// Your definitions here.
+	mu      sync.Mutex
+	kvStore map[string]string
+	OpCache *LruCache
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	task := Operation{Optype: OpGet, Opid: args.UUID, Args: args, Reply: reply, Empty: false}
-	kv.Manager.PushOp(task)
+	task := Operation{Optype: OpGet, Opid: args.UUID, Key: args.Key}
+	kv.Op(&task)
+	reply.Value = task.Value
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
-	task := Operation{Optype: OpPut, Opid: args.UUID, Args: args, Reply: reply, Empty: false}
-	kv.Manager.PushOp(task)
+	task := Operation{Optype: OpPut, Opid: args.UUID, Key: args.Key, Value: args.Value}
+	kv.Op(&task)
+	reply.Value = ""
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
-	task := Operation{Optype: OpAppend, Opid: args.UUID, Args: args, Reply: reply, Empty: false}
-	kv.Manager.PushOp(task)
+	task := Operation{Optype: OpAppend, Opid: args.UUID, Key: args.Key, Value: args.Value}
+	kv.Op(&task)
+	reply.Value = task.Value
 }
 
 func StartKVServer() *KVServer {
 	kv := new(KVServer)
-	kv.Manager = Manager{kvStore: make(map[string]string), OpQueue: *NewSliceQueue(10), OpCache: NewCache(10)}
-	go func() {
-		for {
-			kv.Manager.Op()
-		}
-	}()
-	// go func ()  {
-	// 	for{
-	// 		fmt.Printf("%v\n",kv.Manager.kvStore)
-	// 		time.Sleep(1*time.Second)
-	// 	}
-	// }()
+	kv.kvStore = make(map[string]string)
+	kv.mu = sync.Mutex{}
+	kv.OpCache = newLruCache(30)
 	return kv
 }
 
-func (m *Manager) PushOp(op Operation) {
-	m.OpQueue.Enqueue(op)
-}
-
-func (m *Manager) Op() {
-	if m.OpQueue.isEmpty() {
-		return
-	}
-	task := m.OpQueue.Dequeue()
-	if m.OpCache.Contains(task.Opid) {
-		//如果是修改操作，直接返回成功，不执行
-		//如果是读取操作，直接查询返回
-		switch task.Optype {
-		case OpGet:
-			task.Reply.(*GetReply).Value = (m.kvStore)[task.Args.(*GetArgs).Key]
-		case OpPut:
-		case OpAppend:
-			task.Reply.(*PutAppendReply).Value = "" //需要参看通讯规范
-		}
+func (kv *KVServer) Op(task *Operation) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if kv.OpCache.Contain(task.Opid) {
+		oldop, _ := kv.OpCache.Get(task.Opid)
+		task.Value = oldop.Value
 	} else {
 		switch task.Optype {
 		case OpGet:
-			fmt.Printf("get key:%v\n", task.Args.(*GetArgs).Key)
-			task.Reply.(*GetReply).Value = (m.kvStore)[task.Args.(*GetArgs).Key]
-		case OpPut:
-			fmt.Printf("put op :put k:%v v:%v\n", (task.Args.(*PutAppendArgs).Key), (task.Args.(*PutAppendArgs).Value))
-			(m.kvStore)[task.Args.(*PutAppendArgs).Key] = task.Args.(*PutAppendArgs).Value
-			// fmt.Printf("kvstore detail:%+v\n",m.kvStore)
-			task.Reply.(*PutAppendReply).Value = ""
+			task.Value = kv.kvStore[task.Key]
 		case OpAppend:
-			fmt.Printf("append op :append k:%v v:%v\n", (task.Args.(*PutAppendArgs).Key), (task.Args.(*PutAppendArgs).Value))
-			old := (m.kvStore)[task.Args.(*PutAppendArgs).Key]
-			(m.kvStore)[task.Args.(*PutAppendArgs).Key] += task.Args.(*PutAppendArgs).Value
-			task.Reply.(*PutAppendReply).Value = old
+			old, ok := kv.kvStore[task.Key]
+			if !ok {
+				old = ""
+			}
+			kv.kvStore[task.Key] += task.Value
+			task.Value = old
+		case OpPut:
+			kv.kvStore[task.Key] = task.Value
 		}
-		m.OpCache.Add(task.Opid)
+		kv.OpCache.Add(*task)
 	}
+
 }

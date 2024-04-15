@@ -5,45 +5,50 @@ import (
     "github.com/google/uuid"
 )
 
-type Cache struct {
-    capacity int
-    ll       *list.List
-    cache    map[uuid.UUID]*list.Element
+
+type Entry struct {
+    OpId       uuid.UUID
+    Operation  *Operation
 }
 
-type entry struct {
-    key   uuid.UUID
+type LruCache struct {
+    MaxCapacity int
+    CacheList   *list.List
+    CacheMap    map[uuid.UUID]*list.Element
 }
 
-func NewCache(capacity int) *Cache {
-    return &Cache{
-        capacity: capacity,
-        ll:       list.New(),
-        cache:    make(map[uuid.UUID]*list.Element),
+func newLruCache(maxCapacity int) *LruCache {
+    return &LruCache{
+        MaxCapacity: maxCapacity,
+        CacheList:   list.New(),
+        CacheMap:    make(map[uuid.UUID]*list.Element),
     }
 }
 
-func (c *Cache) Add(key uuid.UUID) {
-    if _, ok := c.cache[key]; ok {
-        return
+func (lc *LruCache) Add(op Operation) {
+    if lc.CacheList.Len() >= lc.MaxCapacity {
+        delete(lc.CacheMap, lc.CacheList.Back().Value.(*Entry).OpId)
+        lc.CacheList.Remove(lc.CacheList.Back())
     }
 
-    e := c.ll.PushFront(&entry{key})
-    c.cache[key] = e
-    if c.capacity != 0 && c.ll.Len() > c.capacity {
-        c.RemoveOldest()
+    entry := &Entry{
+        OpId:       op.Opid,
+        Operation:  &op,
     }
+
+    element := lc.CacheList.PushFront(entry)
+    lc.CacheMap[op.Opid] = element
 }
 
-func (c *Cache) RemoveOldest() {
-    if e := c.ll.Back(); e != nil {
-        c.ll.Remove(e)
-        kv := e.Value.(*entry)
-        delete(c.cache, kv.key)
+func (lc *LruCache) Get(opId uuid.UUID) (*Operation, bool) {
+    if element, ok := lc.CacheMap[opId]; ok {
+        return element.Value.(*Entry).Operation, true
     }
+
+    return nil, false
 }
 
-func (c *Cache) Contains(key uuid.UUID) bool {
-    _, ok := c.cache[key]
+func (lc *LruCache) Contain(opId uuid.UUID) bool {
+    _, ok := lc.CacheMap[opId]
     return ok
 }

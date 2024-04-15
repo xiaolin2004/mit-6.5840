@@ -28,7 +28,7 @@ func (q *SliceQueue) Dequeue() Operation {
 	q.mu.Lock()
 	if len(q.data) == 0 {
 		q.mu.Unlock()
-		return Operation{Empty: true}
+		return Operation{}
 	}
 	v := q.data[0]
 	q.data = q.data[1:]
