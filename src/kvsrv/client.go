@@ -1,9 +1,12 @@
 package kvsrv
 
-import "6.5840/labrpc"
-import "crypto/rand"
-import "math/big"
+import (
+	"crypto/rand"
+	"math/big"
 
+	"6.5840/labrpc"
+	"github.com/google/uuid"
+)
 
 type Clerk struct {
 	server *labrpc.ClientEnd
@@ -35,9 +38,25 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-
+	args := GetArgs{Key: key, UUID: uuid.New()}
+	reply := GetReply{}
+	sig := new(chan int)
+	go ck.callGetrepeatedky(&args, &reply, *sig)
 	// You will have to modify this function.
-	return ""
+	return reply.Value
+}
+
+func (ck *Clerk) callGetrepeatedky(args *GetArgs, reply *GetReply, sig chan int) {
+	ok := ck.server.Call("KVServer.Get", args, reply)
+	for {
+		if ok {
+			sig <- 1
+			break
+		} else {
+			ok = ck.server.Call("KVServer.Get", args, reply)
+		}
+	}
+
 }
 
 // shared by Put and Append.
@@ -49,8 +68,25 @@ func (ck *Clerk) Get(key string) string {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
-	// You will have to modify this function.
-	return ""
+	args := PutAppendArgs{Key: key, Value: value, UUID: uuid.New()}
+	reply := PutAppendReply{}
+	sig := new(chan int)
+	go ck.callPutAppendrepeatedly(&args, &reply, *sig, op)
+	return reply.Value
+}
+
+func (ck *Clerk) callPutAppendrepeatedly(args *PutAppendArgs, reply *PutAppendReply, sig chan int, op string) {
+	rpcname := "KVServer." + op
+	ok := ck.server.Call(rpcname, args, reply)
+	for {
+		if ok {
+			sig <- 1
+			break
+		} else {
+			ok = ck.server.Call(rpcname, args, reply)
+		}
+	}
+
 }
 
 func (ck *Clerk) Put(key string, value string) {
