@@ -37,47 +37,55 @@ type KVServer struct {
 	mu      sync.RWMutex
 	kvStore map[string]string
 	OpCache *LruCache
+	reqlim RequestLimiter
 }
-
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	kv.reqlim.TryIn()
 	task := OpPool.Get().(*Operation)
 	task.Optype = OpGet
 	task.Opid = args.UUID
 	task.Key = args.Key
 	kv.Op(task)
 	reply.Value = task.Value
+	kv.reqlim.Done()
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
+	kv.reqlim.TryIn()
 	task := OpPool.Get().(*Operation)
-    task.Optype = OpPut
-    task.Opid = args.UUID
-    task.Key = args.Key
-	task.Value=args.Value
+	task.Optype = OpPut
+	task.Opid = args.UUID
+	task.Key = args.Key
+	task.Value = args.Value
 	kv.Op(task)
 	reply.Value = ""
+	kv.reqlim.Done()
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
+	kv.reqlim.TryIn()
 	task := OpPool.Get().(*Operation)
-    task.Optype = OpAppend
-    task.Opid = args.UUID
-    task.Key = args.Key
-    task.Value=args.Value
+	task.Optype = OpAppend
+	task.Opid = args.UUID
+	task.Key = args.Key
+	task.Value = args.Value
 	kv.Op(task)
 	reply.Value = task.Value
+	kv.reqlim.Done()
 }
 
 func StartKVServer() *KVServer {
 	kv := new(KVServer)
 	kv.kvStore = make(map[string]string)
 	kv.mu = sync.RWMutex{}
+    kv.reqlim = *NewRequestLimiter()
 	kv.OpCache = newLruCache(100)
 	OpPool = sync.Pool{New: func() interface{} {
 		return new(Operation)
 	}}
 	return kv
 }
+
 
 func (kv *KVServer) Op(task *Operation) {
 	kv.mu.RLock()
