@@ -28,8 +28,10 @@ func newLruCache(maxCapacity int) *LruCache {
 func (lc *LruCache) Add(op Operation) {
     if lc.CacheList.Len() >= lc.MaxCapacity {
         delete(lc.CacheMap, lc.CacheList.Back().Value.(*Entry).OpId)
+		retentry := (lc.CacheList.Back().Value.(*Entry).Operation)
+		OpPool.Put(retentry)
         lc.CacheList.Remove(lc.CacheList.Back())
-		
+
     }
 
     entry := &Entry{

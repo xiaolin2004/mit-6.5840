@@ -3,6 +3,7 @@ package kvsrv
 import (
 	"log"
 	"sync"
+
 	"github.com/google/uuid"
 )
 
@@ -30,6 +31,8 @@ const (
 	OpAppend = 102
 )
 
+var OpPool = sync.Pool{}
+
 type KVServer struct {
 	mu      sync.RWMutex
 	kvStore map[string]string
@@ -37,20 +40,31 @@ type KVServer struct {
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	task := Operation{Optype: OpGet, Opid: args.UUID, Key: args.Key}
-	kv.Op(&task)
+	task := OpPool.Get().(*Operation)
+	task.Optype = OpGet
+	task.Opid = args.UUID
+	task.Key = args.Key
+	kv.Op(task)
 	reply.Value = task.Value
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
-	task := Operation{Optype: OpPut, Opid: args.UUID, Key: args.Key, Value: args.Value}
-	kv.Op(&task)
+	task := OpPool.Get().(*Operation)
+    task.Optype = OpPut
+    task.Opid = args.UUID
+    task.Key = args.Key
+	task.Value=args.Value
+	kv.Op(task)
 	reply.Value = ""
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
-	task := Operation{Optype: OpAppend, Opid: args.UUID, Key: args.Key, Value: args.Value}
-	kv.Op(&task)
+	task := OpPool.Get().(*Operation)
+    task.Optype = OpAppend
+    task.Opid = args.UUID
+    task.Key = args.Key
+    task.Value=args.Value
+	kv.Op(task)
 	reply.Value = task.Value
 }
 
@@ -58,7 +72,10 @@ func StartKVServer() *KVServer {
 	kv := new(KVServer)
 	kv.kvStore = make(map[string]string)
 	kv.mu = sync.RWMutex{}
-	kv.OpCache = newLruCache(30)
+	kv.OpCache = newLruCache(100)
+	OpPool = sync.Pool{New: func() interface{} {
+		return new(Operation)
+	}}
 	return kv
 }
 
