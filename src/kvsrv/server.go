@@ -106,6 +106,7 @@ func (kv *KVServer) Op(task *Operation) {
 			kv.mu.RUnlock()
 			kv.mu.Lock()
 			kv.kvStore[task.Key] += task.Value
+			task.Key=""
 			task.Value = old
 			kv.OpCache.Add(*task)
 			kv.mu.Unlock()
@@ -113,6 +114,8 @@ func (kv *KVServer) Op(task *Operation) {
 			kv.mu.RUnlock()
 			kv.mu.Lock()
 			kv.kvStore[task.Key] = task.Value
+			task.Key=""
+			task.Value=""
 			kv.OpCache.Add(*task)
 			kv.mu.Unlock()
 		}

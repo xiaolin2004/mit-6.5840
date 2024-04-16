@@ -51,3 +51,40 @@
   - 如果该值存在，则替换，如果不存在，则直接新增
 - Append
   - 如果value存在，则将请求中的value append到原value的末尾，如果不存在，就新建一个并直接存入请求中的value
+
+# 性能瓶颈
+- 大量append请求导致缓存中的value平方级增长
+  - 增量存储
+    - 存入对应区间首尾index
+      - 如果被put修改呢？ 
+    - 将增量存入一个数组中，并标识是第几次append，然后通过这个前向组合出old
+      - 当遇到put，清空这个数组，并重新开始记录
+    - 另一种思路是，只储存修改请求的操作序列，缓存查询的时候通过计算得到当时的数据
+
+# 进度缓存
+性能瓶颈没有解决，测试结果如下：
+Test: one client ...
+  ... Passed -- t  4.7 nrpc 40247 ops 40247
+Test: many clients ...
+info: linearizability check timed out, assuming history is ok
+  ... Passed -- t  5.8 nrpc 113169 ops 113169
+Test: unreliable net, many clients ...
+  ... Passed -- t  3.3 nrpc  1164 ops  944
+Test: concurrent append to same key, unreliable ...
+  ... Passed -- t  0.3 nrpc    68 ops   52
+Test: memory use get ...
+  ... Passed -- t  0.3 nrpc     5 ops    0
+Test: memory use put ...
+  ... Passed -- t  0.2 nrpc     2 ops    0
+Test: memory use append ...
+  ... Passed -- t  0.3 nrpc     2 ops    0
+Test: memory use many put clients ...
+  ... Passed -- t  8.1 nrpc 100000 ops    0
+Test: memory use many get client ...
+  ... Passed -- t  9.1 nrpc 100001 ops    0
+Test: memory use many appends ...
+--- FAIL: TestMemManyAppends (1.19s)
+    test_test.go:599: error: server using too much memory m0 380456 m1 96754608
+FAIL
+exit status 1
+FAIL    6.5840/kvsrv    35.411s
